@@ -1,0 +1,74 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: #0a0a0f;
+    --surface: #12121a;
+    --surface-2: #1a1a26;
+    --border: #2a2a3a;
+    --accent: #6366f1;
+    --accent-glow: rgba(99, 102, 241, 0.3);
+    --text-primary: #f1f1f5;
+    --text-secondary: #8888aa;
+    --success: #22c55e;
+    --error: #ef4444;
+    --warning: #f59e0b;
+  }
+
+  * {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+  }
+
+  body {
+    background-color: #0a0a0f;
+    color: #f1f1f5;
+    font-family: Inter, system-ui, -apple-system, sans-serif;
+    min-height: 100vh;
+  }
+}
+
+@layer components {
+  .gradient-bg {
+    background-color: #0a0a0f;
+    background-image:
+      radial-gradient(ellipse at top left, rgba(99, 102, 241, 0.15) 0%, transparent 50%),
+      radial-gradient(ellipse at bottom right, rgba(168, 85, 247, 0.1) 0%, transparent 50%);
+    min-height: 100vh;
+  }
+
+  .glass {
+    background-color: rgba(18, 18, 26, 0.85);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid #2a2a3a;
+    border-radius: 0.75rem;
+  }
+
+  .progress-bar {
+    background: linear-gradient(90deg, #6366f1, #a855f7);
+    border-radius: 999px;
+    transition: width 0.5s ease;
+  }
+
+  .animate-pulse-glow {
+    animation: pulse-glow 2s ease-in-out infinite;
+  }
+}
+
+@keyframes pulse-glow {
+  0%, 100% {
+    box-shadow: 0 0 10px rgba(99, 102, 241, 0.3);
+  }
+  50% {
+    box-shadow: 0 0 30px rgba(99, 102, 241, 0.5);
+  }
+}
+
+@keyframes shimmer {
+  0%   { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
