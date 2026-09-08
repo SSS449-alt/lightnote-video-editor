@@ -23,6 +23,12 @@
 ![Uploading image.png…]()
 
 
+<h2>📁 Project Structure</h2>
+
+<p align="center">
+  <img src="docs/screenshots/project-structure.png" alt="LightNoteAI Project Structure" width="850">
+</p>
+
 ## Technical Design
 
 The complete technical design is shown below in the same visual layout as the project design document. This keeps the architecture diagrams, tables, spacing, and overall presentation consistent on GitHub.
