@@ -8,279 +8,957 @@
 [![Gemini API](https://img.shields.io/badge/Gemini-API-blue)](https://ai.google.dev/)
 
 ---
+LightNoteAI --- AI-Powered Video Object Editor
 
-Technical Design & Implementation Overview
+Full-Stack AI Developer Intern Technical Assignment
+Natural-language video editing with object detection, segmentation,
+tracking, AI-assisted replacement/removal, and asynchronous
+processing.
 
-PROJECT GOAL
-Modify or replace an object in a user-uploaded video from a natural-language instruction, while keeping the AI/video workflow on the backend and exposing clear processing progress to the frontend.
+1. Overview
+
+LightNoteAI is an AI-powered video editing prototype that lets a
+user modify an object in a video using a natural-language instruction.
+
+Example
 
 Input
-Video + optional reference image + natural-language editing prompt	Output
-Processed, web-friendly MP4 with the requested object edit
-Core AI
-Claude API • GroundingDINO • SAM2 • Stable Diffusion / OpenCV fallback	Engineering
-FastAPI • Celery • Redis • WebSocket • FFmpeg • Next.js 14
 
-Prepared for LightNoteAI — Full-Stack AI Developer Intern Technical Assignment
-Design focus: AI understanding • reliable backend workflow • explainable engineering decisions
- 
-1. Executive Overview
-LightNoteAI is a prototype full-stack AI video editor that converts a natural-language editing request into a structured, asynchronous computer-vision pipeline. The application is designed around a simple user experience while keeping model orchestration, video processing, job state, and failure handling on the backend.
-ONE-LINE SYSTEM STORY
-Upload video → describe the edit → parse intent → detect target → segment & track → edit/inpaint → recompose video → preview result.
+Video: a person holding a Coca-Cola bottle
 
-What the prototype demonstrates
-•	Natural-language editing intent is converted into structured machine-readable instructions.
-•	Arbitrary objects can be located from text without training a custom detector.
-•	The selected object is segmented and tracked across video frames before modification.
-•	Long-running video work is executed asynchronously instead of blocking the API request.
-•	The user sees job progress and receives a final MP4 when processing completes.
-•	The pipeline has a graceful fallback path for environments without the full GPU model stack.
-Design principles
-Functionality first
-Prioritize a reliable end-to-end prototype over visual perfection.	AI where it matters
-Use LLM reasoning for intent and vision models for spatial/temporal understanding.
-Backend ownership
-Keep model orchestration, frame processing, queues, and file generation off the client.	Graceful degradation
-Use OpenCV/reference compositing when heavier models are unavailable.
+Reference image: Pepsi bottle
 
-2. System Architecture
-The application separates interaction, orchestration, asynchronous execution, model inference, and media composition. This keeps the browser lightweight and makes the heavy workflow observable and retryable.
-WEB CLIENT — Next.js 14 + TailwindCSS
-↓
-API LAYER — FastAPI (upload, validation, job creation, status)
-↓
-JOB LAYER — Redis + Celery worker
-↓
-AI / VIDEO PIPELINE — Claude → GroundingDINO → SAM2 → Edit/Inpaint
-↓
-MEDIA COMPOSITION — OpenCV + FFmpeg
-↓
-RESULT — Final MP4 + status metadata
-WebSocket pushes progress updates; HTTP polling remains the fallback path.
-3. Five-Stage AI Processing Pipeline
-A single edit request is transformed through five explicit stages. Each stage has a narrow responsibility, which makes the pipeline easier to debug, explain, and extend.
-Stage	Technology	Input	Output / Responsibility
-1 — Intent Parsing	Claude API	Natural-language prompt	Structured JSON: operation, target, replacement, confidence
-2 — Object Detection	GroundingDINO	Target text + sampled frame	Bounding box(es) + confidence
-3 — Segmentation & Tracking	SAM2	Bounding box + video frames	Pixel mask propagated across frames
-4 — Edit / Inpaint	Stable Diffusion / reference-guided path / OpenCV fallback	Frame + mask + replacement intent	Edited frame sequence
-5 — Video Composition	FFmpeg + OpenCV	Processed frames + original media	Web-friendly MP4 with original audio preserved
+Instruction: Replace the Coca-Cola bottle with the Pepsi bottle.
 
-Stage 1 — Natural-language intent
-Example request: “Replace the Coca-Cola bottle with Pepsi.” The parser converts the sentence into a deterministic structure that downstream components can consume.
-STRUCTURED INTENT
-operation: replace_object   |   target: Coca-Cola bottle   |   replacement: Pepsi bottle   |   reference_image: optional
+Output
 
-Why use an LLM instead of only regex? Real user prompts may be compound, ambiguous, or multilingual. The structured response becomes the contract between language understanding and computer vision.
-Stage 2–3 — Locate, segment, and track
-GroundingDINO provides zero-shot text-conditioned detection, so the target does not have to belong to a fixed application-specific class list. SAM2 then converts the selected box into a pixel mask and propagates that mask through subsequent frames.
-Text target → GroundingDINO
-↓
-Best bounding box → SAM2
-↓
-Pixel mask → temporal propagation
-Detection answers “where is it?”; segmentation answers “which pixels?”; tracking answers “where does it move?”
-Stage 4–5 — Modify and recompose
-The mask defines the region to modify. The primary path uses an inpainting/replacement strategy; a reference image can guide replacement. A lighter OpenCV TELEA/reference-paste fallback keeps the prototype usable without the complete model stack. FFmpeg then reconstructs the final MP4 and preserves the original audio where available.
-4. End-to-End Request Flow
-The frontend never waits synchronously for the full video edit. It receives a job identifier immediately, then tracks progress until a result URL is available.
-Step	Component	What happens
-1	Browser	User selects a video, optional reference image, and enters an editing prompt.
-2	FastAPI	Validates files and request fields, stores upload metadata, creates a job.
-3	Redis / Celery	Job is queued so the HTTP request can return quickly.
-4	Celery worker	Runs intent parsing and the AI/video pipeline.
-5	WebSocket / polling	Frontend receives stage, percentage, and status updates.
-6	FFmpeg / output store	Processed frames are encoded into the final MP4.
-7	Browser	Final result is previewed from the completed job.
+An edited MP4 in which the target object is attempted to be replaced
+while preserving the rest of the video and original audio.
 
-Job state lifecycle
-QUEUED
-↓
-PARSING_INTENT
-↓
-DETECTING
-↓
-TRACKING
-↓
-EDITING
-↓
-COMPOSING
-↓
-COMPLETED
-Any stage can transition to FAILED with a user-safe message and diagnostic logs.
-Progress delivery
-Primary — WebSocket
-FastAPI streams job progress to the browser for near real-time UI updates.	Fallback — HTTP polling
-If the socket is unavailable, the client periodically calls the job-status endpoint.
-Worker signal
-The worker publishes progress/status events while processing each stage.	User experience
-The UI remains responsive and can show the current stage instead of a frozen request.
+The system is designed around a clear separation of responsibilities:
 
-5. Backend Engineering
-FastAPI acts as the API boundary; Celery owns long-running work; Redis provides the queue/broker role and supports progress communication. This avoids tying GPU-heavy video processing to the lifetime of a single web request.
-Concern	Design choice	Reason
-Long-running tasks	Celery worker	Jobs can execute outside the request/response lifecycle.
-Queue / broker	Redis	Lightweight coordination for asynchronous jobs and progress events.
-API contract	FastAPI	Typed request handling and automatically generated OpenAPI documentation.
-Live status	WebSocket + polling fallback	Responsive progress without making correctness depend on a socket.
-Media processing	OpenCV + FFmpeg	Frame-level manipulation plus reliable video/audio encoding.
+User
+ │
+ ▼
+Next.js Frontend
+ │
+ ▼
+FastAPI API
+ │
+ ├──────────────► Claude ──────────────► Structured editing intent
+ │
+ ▼
+Celery + Redis
+ │
+ ▼
+Video Processing Pipeline
+ │
+ ├── GroundingDINO ──► Target detection
+ ├── SAM2 ───────────► Segmentation + tracking
+ ├── Inpainting / replacement ──► Visual modification
+ └── FFmpeg + OpenCV ───────────► Final MP4
+ │
+ ▼
+Output Video
 
-6. API Design
-The API is job-oriented. Uploading an edit creates a job; the client then queries or subscribes to that job instead of holding a long POST request open.
-Method / Route	Purpose
-POST /api/v1/jobs	Create an edit job from multipart form-data.
-GET /api/v1/jobs/{job_id}	Read current status, progress, errors, and result metadata.
-GET /api/v1/jobs	List recent jobs.
-DELETE /api/v1/jobs/{job_id}	Cancel a job when supported by the active worker state.
-POST /api/v1/jobs/from-url	Bonus path: create a job from a video URL.
-WS /ws/{job_id}	Receive real-time progress events.
+2. Product Workflow
 
-API DOCUMENTATION
-FastAPI exposes interactive OpenAPI documentation at /docs and /redoc, which makes the backend easy to inspect during evaluation.
+flowchart LR
+    A["Upload Video"] --> B["Optional Reference Image"]
+    B --> C["Natural-Language Prompt"]
+    C --> D["Start Processing"]
+    D --> E["Create Async Job"]
+    E --> F["Track Progress"]
+    F --> G["AI Video Pipeline"]
+    G --> H["Final Edited Video"]
 
-7. Fallback & Failure Strategy
-A prototype should fail predictably. The pipeline distinguishes “model-quality fallback” from “hard failure,” so limited hardware does not automatically make the application unusable.
-Can full model path run?
-↓
-YES → GroundingDINO + SAM2 + primary edit/inpaint path
-↓
-NO → OpenCV TELEA for removal / reference-image compositing for replacement
-↓
-Recompose MP4 → return result or explicit failure
-The fallback is a functional degradation path, not a claim of equivalent visual quality.
-Typical error handling
-Failure	Expected handling
-Unsupported / corrupt file	Reject early with a clear validation error.
-Target not found	Return a failed/low-confidence job state instead of editing arbitrary pixels.
-Model unavailable	Use the configured fallback when possible; otherwise expose a clear failure reason.
-Worker exception	Mark the job FAILED and retain logs/metadata for diagnosis.
-WebSocket disconnect	Continue processing; frontend falls back to polling.
-FFmpeg composition error	Do not expose a broken output; fail the job with composition diagnostics.
+User-facing flow
 
-8. Technology Stack
-Layer	Technology	Why it fits
-Frontend	Next.js 14 + TailwindCSS	Fast React UI for upload, prompt, progress, and result preview.
-Backend API	FastAPI	Typed async-friendly API with OpenAPI docs.
-Background jobs	Celery + Redis	Non-blocking execution for heavy video/model tasks.
-Real-time status	WebSocket	Immediate progress updates with polling fallback.
-Intent parsing	Claude API	Transforms free-form language into structured edit intent.
-Object detection	GroundingDINO	Zero-shot text-conditioned target detection.
-Segmentation/tracking	SAM2	Video mask propagation from an initial spatial prompt.
-Editing	Stable Diffusion / reference path / OpenCV fallback	Supports replacement/removal with graceful degradation.
-Video I/O	FFmpeg + OpenCV	Reliable encoding plus frame-level processing.
+Step                    User Action             System Result
 
-9. Local Setup & Runbook
-Two supported local paths are documented: Docker for the shortest setup path, and manual startup for development/debugging.
+1                       Upload video            Video is validated and
+stored
+
+2                       Add reference image     Optional replacement
+visual is stored
+
+3                       Enter instruction       Natural-language
+editing request is
+submitted
+
+4                       Start processing        Backend creates a
+processing job
+
+5                       Monitor status          UI receives pipeline
+progress
+
+3. System Architecture
+
+flowchart TB
+    U["User / Browser"]
+
+    subgraph FE["Frontend"]
+        UI["Next.js 14 UI"]
+        STATE["Job State / Progress UI"]
+        PLAYER["Output Video Player"]
+    end
+
+    subgraph API["Backend"]
+        FAST["FastAPI"]
+        JOBAPI["Job API"]
+        WS["WebSocket Progress"]
+    end
+
+    subgraph QUEUE["Async Processing"]
+        REDIS["Redis"]
+        CELERY["Celery Worker"]
+    end
+
+    subgraph AI["AI / Computer Vision Pipeline"]
+        CLAUDE["Claude API<br/>Intent Parsing"]
+        GDINO["GroundingDINO<br/>Zero-shot Detection"]
+        SAM["SAM2<br/>Segmentation + Tracking"]
+        EDIT["Inpainting / Replacement"]
+        VIDEO["FFmpeg + OpenCV<br/>Video Composition"]
+    end
+
+    U --> UI
+    UI --> JOBAPI
+    JOBAPI --> FAST
+    FAST --> REDIS
+    REDIS --> CELERY
+    CELERY --> CLAUDE
+    CLAUDE --> GDINO
+    GDINO --> SAM
+    SAM --> EDIT
+    EDIT --> VIDEO
+    CELERY --> REDIS
+    REDIS --> WS
+    WS --> STATE
+    VIDEO --> PLAYER
+    PLAYER --> UI
+
+4. Core AI Pipeline
+
+The editing pipeline is intentionally divided into five stages.
+
+flowchart TD
+    P["Natural-Language Instruction"]
+
+    S1["01 — Intent Parsing<br/>Claude API"]
+    S2["02 — Object Detection<br/>GroundingDINO"]
+    S3["03 — Segmentation & Tracking<br/>SAM2"]
+    S4["04 — Object Editing<br/>Inpainting / Reference Replacement"]
+    S5["05 — Video Composition<br/>FFmpeg + OpenCV"]
+
+    O["Final Edited MP4"]
+
+    P --> S1 --> S2 --> S3 --> S4 --> S5 --> O
+
+Stage 1 --- Intent Parsing
+
+Claude converts the user's natural-language instruction into structured
+intent.
+
+User:
+"Replace the Coca-Cola bottle with Pepsi."
+
+                │
+                ▼
+
+Claude API
+
+                │
+                ▼
+
+{
+  "operation": "replace_object",
+  "target": "Coca-Cola bottle",
+  "replacement": "Pepsi bottle"
+}
+
+The structured result becomes the contract between language
+understanding and the downstream computer-vision pipeline.
+
+Stage 2 --- Object Detection
+
+GroundingDINO receives the target description as a text prompt.
+
+Target:
+"Coca-Cola bottle"
+
+        │
+        ▼
+
+GroundingDINO
+
+        │
+        ▼
+
+Bounding Box + Confidence
+
+The key design reason is that the target comes from the user's language
+rather than a fixed application-specific object list.
+
+Stage 3 --- Segmentation & Tracking
+
+The detected region is converted into a pixel-level mask and propagated
+through the video using SAM2.
+
+Frame 0
+  │
+  ├── Bounding Box
+  │
+  ▼
+SAM2 Segmentation
+  │
+  ▼
+Pixel Mask
+  │
+  ▼
+Temporal Tracking
+  │
+  ├── Frame 1
+  ├── Frame 2
+  ├── Frame 3
+  └── ...
+
+This avoids treating every frame as an independent detection problem.
+
+Stage 4 --- Object Editing
+
+The mask identifies the region to modify.
+
+Replacement
+
+Original Frame
+      │
+      ▼
+Target Mask
+      │
+      ▼
+Reference / Generated Replacement
+      │
+      ▼
+Edited Frame
+
+Removal
+
+Original Frame
+      │
+      ▼
+Target Mask
+      │
+      ▼
+Inpainting
+      │
+      ▼
+Background-Filled Frame
+
+The implementation can use an AI inpainting pipeline where available,
+with an OpenCV-based fallback for removal and reference-image-based
+replacement.
+
+Stage 5 --- Video Composition
+
+Processed frames are converted back into a playable video.
+
+flowchart LR
+    F["Processed Frames"]
+    A["Original Audio"]
+    FF["FFmpeg / OpenCV"]
+    OUT["Web-Optimized MP4"]
+
+    F --> FF
+    A --> FF
+    FF --> OUT
+
+The original audio is preserved; audio editing is outside the current
+scope.
+
+5. Why These Technologies?
+
+Component         Technology        Responsibility    Why
+
+Frontend          Next.js 14 +      UI and job        React-based,
+TypeScript        interaction       typed, practical
+full-stack
+integration
+
+Styling           TailwindCSS       UI                Fast, consistent
+interface
+
+API               FastAPI           Backend           Typed Python API
+orchestration     and automatic API
+documentation
+
+Job Queue         Celery            Background        Suitable for
+processing        long-running
+video/AI tasks
+
+Queue / Broker    Redis             Job and progress  Lightweight
+transport         infrastructure for
+asynchronous work
+
+NLP               Claude API        Intent parsing    Converts flexible
+natural language
+into structured
+intent
+
+Detection         GroundingDINO     Target detection  Text-conditioned
+zero-shot
+detection
+
+Segmentation      SAM2              Segmentation and  Pixel-level masks
+tracking          and multi-frame
+propagation
+
+Editing           Inpainting /      Object            Removes or
+reference         modification      replaces masked
+replacement                         content
+
+6. End-to-End Request Lifecycle
+
+sequenceDiagram
+    participant U as User
+    participant F as Next.js
+    participant A as FastAPI
+    participant R as Redis
+    participant C as Celery
+    participant AI as AI Pipeline
+    participant V as Video Output
+
+    U->>F: Upload video + reference + prompt
+    F->>A: POST /api/v1/jobs
+    A->>R: Create queued job
+    A-->>F: job_id
+    R->>C: Deliver job
+    C->>AI: Parse intent
+    AI->>AI: Detect target
+    AI->>AI: Segment + track
+    AI->>AI: Edit object
+    AI->>V: Compose MP4
+    C->>R: Publish progress
+    R-->>A: Progress events
+    A-->>F: WebSocket / polling status
+    V-->>F: Output URL
+    F-->>U: Preview final video
+
+7. Asynchronous Job Processing
+
+Video processing can take significantly longer than a normal HTTP
+request. Therefore, the API creates a job instead of keeping the request
+open for the complete pipeline.
+
+HTTP Request
+     │
+     ▼
+Create Job
+     │
+     ▼
+job_id returned immediately
+     │
+     ├───────────────► Browser tracks status
+     │
+     ▼
+Redis
+     │
+     ▼
+Celery Worker
+     │
+     ▼
+Long-running AI/video processing
+     │
+     ▼
+Completed / Failed
+
+Job lifecycle
+
+stateDiagram-v2
+    [*] --> QUEUED
+    QUEUED --> PROCESSING
+    PROCESSING --> COMPLETED
+    PROCESSING --> FAILED
+    QUEUED --> CANCELLED
+    PROCESSING --> CANCELLED
+    COMPLETED --> [*]
+    FAILED --> [*]
+    CANCELLED --> [*]
+
+8. Real-Time Progress
+
+The frontend can receive live progress through WebSocket communication.
+
+flowchart LR
+    W["Celery Worker"]
+    R["Redis Pub/Sub"]
+    A["FastAPI WebSocket"]
+    B["Browser"]
+
+    W -->|"progress event"| R
+    R -->|"event"| A
+    A -->|"WebSocket"| B
+
+Example UI state:
+
+✓ Intent Parsing
+✓ Object Detection
+✓ Segmentation & Tracking
+⟳ Object Editing
+○ Video Composition
+
+If WebSocket communication is unavailable, the frontend can fall back to
+HTTP status polling.
+
+9. API Design
+
+Base API:
+
+/api/v1
+
+Method   Endpoint           Purpose
+
+POST     /jobs            Create a video-editing job
+GET      /jobs/{job_id}   Get job status
+GET      /jobs            List recent jobs
+DELETE   /jobs/{job_id}   Cancel a job
+POST     /jobs/from-url   Create job from a video URL
+WS       /ws/{job_id}     Stream real-time job progress
+
+FastAPI also exposes interactive API documentation:
+
+http://localhost:8000/docs
+http://localhost:8000/redoc
+
+10. Supported Editing Operations
+
+User Instruction                        Operation          Reference Image
+
+Replace the Coca-Cola with Pepsi      replace_object   Optional
+Remove the bottle                     remove_object    No
+Replace the logo with our brand       replace_object   Recommended
+Make the car blue                     recolor_object   No
+Delete the person in the background   remove_object    No
+
+11. Fallback Strategy
+
+The application is designed to degrade gracefully when heavyweight AI
+models are unavailable.
+
+flowchart TD
+    A["Requested Editing Operation"]
+    A --> B{"Required AI Model Available?"}
+
+    B -->|"Yes"| C["AI Processing Pipeline"]
+    B -->|"No"| D["Fallback Processing"]
+
+    D --> E["OpenCV TELEA<br/>for removal"]
+    D --> F["Reference-image paste<br/>for replacement"]
+
+    C --> G["Final Composition"]
+    E --> G
+    F --> G
+
+This allows the application architecture to remain demonstrable even
+when a local machine does not have the hardware needed for every model.
+
+12. Project Structure
+
+lightnote-video-editor/
+│
+├── backend/
+│   ├── main.py
+│   ├── celery_app.py
+│   ├── requirements.txt
+│   ├── .env.example
+│   └── ...
+│
+├── frontend/
+│   ├── app/
+│   ├── components/
+│   ├── lib/
+│   ├── public/
+│   ├── package.json
+│   └── ...
+│
+├── docker-compose.yml
+├── README.md
+└── ...
+
+The exact structure may evolve as implementation modules are separated
+further.
+
+13. Local Setup
+
 Prerequisites
-•	Python 3.11+
-•	Node.js 18+
-•	Redis
-•	FFmpeg
-•	Optional CUDA-capable GPU for faster model inference
-Quick start — Docker
-COMMANDS
-git clone <your-repo>
+
+Python 3.11+
+
+Node.js 18+
+
+Redis
+
+FFmpeg
+
+Optional CUDA-compatible GPU for faster model execution
+
+Anthropic API key
+
+Option A --- Docker
+
+git clone <your-repository-url>
 cd lightnote-video-editor
+
 cp backend/.env.example backend/.env
-# set ANTHROPIC_API_KEY in backend/.env
+
+Set:
+
+ANTHROPIC_API_KEY=your_api_key
+
+Then:
+
 docker-compose up --build
 
-Service	Local URL / role
-Frontend	http://localhost:3000
-Backend API	http://localhost:8000
-API Docs	http://localhost:8000/docs
-Redis	Queue/broker and progress coordination
-Celery worker	Executes AI/video jobs
+Services:
 
-Manual startup — development
-Terminal	Commands / purpose
-1 — Backend	cd backend → create/activate venv → pip install -r requirements.txt → copy .env → uvicorn main:app --reload --port 8000
-2 — Worker	cd backend → activate venv → celery -A celery_app worker --loglevel=info
-3 — Frontend	cd frontend → npm install → npm run dev
+Frontend   → http://localhost:3000
+Backend    → http://localhost:8000
+API Docs   → http://localhost:8000/docs
 
-DEMO CHECK
-Before recording: upload a short video → add a reference image → enter the prompt → start processing → show stage progress → play the final output.
+Option B --- Manual Setup
 
-10. Supported Operations
-Example prompt	Operation	Notes
-Replace the Coca-Cola with Pepsi	replace_object	Reference image optional.
-Remove the watermark	remove_object	Masked region is filled with surrounding/background content.
-Replace the logo with our brand	replace_object + reference	Reference image is used by the replacement path.
-Make the car blue	recolor_object	Object-local color transformation.
-Delete the person in background	remove_object	Target is selected from free-form text.
+Backend
 
-11. Known Limitations
-The prototype intentionally prioritizes technical approach and a working pipeline over production-grade visual quality. The following constraints should be communicated clearly rather than hidden.
-Limitation	Impact
-CPU processing time	Without GPU acceleration, video processing can take several minutes.
-Video length / frame cap	Short inputs are preferred to avoid excessive memory use.
-Occlusion	Tracking can degrade if the object becomes fully hidden.
-Fast motion	Masks may become inconsistent on rapid movement or motion blur.
-Fallback quality	Reference-paste/OpenCV modes can show seams or less realistic blending.
-Audio editing	Original audio is preserved; semantic audio editing is outside scope.
+cd backend
 
-12. Key Engineering Decisions
-Celery over in-process background tasks
-A persistent queue is more suitable for long-running video work, retries, time limits, and independent workers.	GroundingDINO over a fixed-class detector
-The target comes from arbitrary user text, so zero-shot text-conditioned detection is a better fit than a project-specific fixed class list.
-SAM2 for video masks
-Tracking a propagated mask avoids re-detecting from scratch on every frame and improves temporal continuity.	WebSocket + polling
-WebSocket improves responsiveness; polling keeps status retrieval robust when the socket is unavailable.
-Explicit fallback path
-The application remains demonstrable on limited hardware while clearly separating fallback quality from primary-model quality.	Job-oriented API
-A job ID is a clean contract for upload, progress, cancellation, failure handling, and final result retrieval.
+python -m venv venv
 
-13. Security & Reliability Notes
-•	Keep API keys in environment variables; do not commit secrets to GitHub.
-•	Validate file types, extensions, and size limits before queueing work.
-•	Use generated job/file names rather than trusting user-supplied paths.
-•	Return user-safe error messages while keeping detailed diagnostics in server logs.
-•	Treat uploaded media as untrusted input and clean temporary files according to retention policy.
-•	Use request size limits and rate limiting before exposing the service publicly.
-14. Future Enhancements
-Enhancement	Value
-IP-Adapter / stronger reference conditioning	Improve visual identity transfer from a reference image.
-Temporally consistent video inpainting	Reduce frame-to-frame flicker and improve realism.
-Cloud object storage	Move uploads/results from local disk to durable storage.
-GPU worker pool	Scale expensive inference independently from the API.
-Rate limits + auth	Safer public deployment and basic abuse protection.
-Capability-aware routing / RAG	Route prompts to documented editing capabilities and explain unsupported requests more reliably.
+Windows
 
-15. Interview-Ready Explanation
-30-SECOND SUMMARY
-“The system uses a five-stage pipeline. Claude converts the user’s prompt into structured intent. GroundingDINO performs zero-shot target detection. SAM2 segments and tracks the object across frames. The edit stage inpaints or replaces the masked region, with an OpenCV/reference fallback when needed. FFmpeg then composes the final video. Heavy work runs asynchronously through Celery and Redis, while the frontend receives live progress through WebSocket with polling fallback.”
+venv\Scripts\activate
 
-Likely technical questions
-Question	Answer direction
-Why Celery instead of FastAPI BackgroundTasks?	Video jobs can outlive one web request; a queue/worker model supports persistence, retries, time limits, and separate scaling.
-Why GroundingDINO instead of YOLO?	The object is described by arbitrary user text; zero-shot text-conditioned detection avoids relying on an application-specific fixed class list.
-How does progress work?	The worker emits stage/progress updates; FastAPI forwards them through WebSocket; the UI polls status if the socket fails.
-Why use Claude instead of regex?	Structured LLM parsing handles ambiguity, compound instructions, and free-form language better than brittle string rules.
-What happens without GPU models?	The pipeline degrades to OpenCV removal/reference compositing where possible and communicates the quality limitation.
+macOS / Linux
 
- 
-16. Demo Flow (2–3 minutes)
-Time	Screen action	What to say
-0:00–0:15	Open LightNoteAI	“This is my AI-powered video editing prototype that modifies objects from natural-language instructions.”
-0:15–0:35	Upload input video	“I am uploading a short video containing the object I want to modify.”
-0:35–0:50	Add reference image	“I am also providing an optional reference image for the replacement.”
-0:50–1:05	Enter prompt	“I will describe the edit in natural language: Replace the Coca-Cola bottle with the Pepsi bottle.”
-1:05–1:15	Start processing	“The request is now submitted as an asynchronous backend job.”
-1:15–1:50	Show processing stages	“The pipeline parses intent, detects the target, segments and tracks it, applies the edit, and composes the final video.”
-1:50–2:30	Preview final output	“The processing is complete, and here is the final edited result.”
+source venv/bin/activate
 
-17. Final Evaluation Mapping
-Evaluation area	Where this solution addresses it
-AI Integration & Understanding	Structured LLM intent + zero-shot detection + video segmentation/tracking + edit pipeline.
-Problem Solving	Stage separation, fallbacks, clear limitations, and robust job lifecycle.
-Backend Engineering	FastAPI, Celery, Redis, typed API, asynchronous processing, failure states.
-Full-Stack Implementation	Upload UI, prompt input, progress status, output preview, backend integration.
-Code Quality	Modular pipeline stages, explicit API contracts, environment configuration.
-Architecture Decisions	Job-oriented API, zero-shot detector, propagated masks, WebSocket/polling, fallback strategy.
+Install dependencies:
 
-FINAL POSITIONING
-This is intentionally a technically strong prototype: the architecture and AI orchestration are the main deliverables, while visual output quality is treated as an improvable model-level concern rather than hidden behind frontend polish.
+pip install -r requirements.txt
+
+Create environment file:
+
+cp .env.example .env
+
+Set the required API key in .env.
+
+Start FastAPI:
+
+uvicorn main:app --reload --port 8000
+
+Start Celery in another terminal:
+
+celery -A celery_app worker --loglevel=info
+
+Frontend
+
+Open another terminal:
+
+cd frontend
+npm install
+npm run dev
+
+Then open:
+
+http://localhost:3000
+
+14. Environment Variables
+
+Example:
+
+ANTHROPIC_API_KEY=your_api_key
+REDIS_URL=redis://localhost:6379/0
+
+Frontend/backend URLs should be configured according to the local or
+deployed environment.
+
+Security rule
+
+Never commit .env or real API keys to GitHub.
+
+Commit only:
+
+.env.example
+
+15. Error Handling
+
+The system should treat each stage as an independently observable
+operation.
+
+Upload Validation
+       │
+       ▼
+Job Creation
+       │
+       ▼
+Intent Parsing
+       │
+       ▼
+Detection
+       │
+       ▼
+Segmentation / Tracking
+       │
+       ▼
+Editing
+       │
+       ▼
+Composition
+       │
+       ▼
+Output Validation
+
+If a stage fails:
+
+FAILED
+  │
+  ├── Store error information
+  ├── Stop dependent stages
+  ├── Expose useful status to frontend
+  └── Keep the API responsive
+
+Useful validation includes:
+
+supported video formats
+
+supported image formats
+
+file size limits
+
+video duration limits
+
+required prompt validation
+
+job existence checks
+
+missing/invalid environment variables
+
+model/runtime failures
+
+16. Known Limitations
+
+This is a prototype focused on engineering approach rather than
+production-level visual quality.
+
+Processing time
+
+CPU-only execution can take considerably longer than GPU execution.
+
+Video length
+
+The current implementation limits video duration/frame count to control
+memory usage.
+
+Occlusion
+
+If the target becomes heavily occluded, tracking quality may decrease.
+
+Fast motion
+
+Very fast object movement can produce inconsistent masks.
+
+Replacement quality
+
+Without a dedicated generative/reference-conditioned editing model,
+reference-based replacement may show seam or perspective artifacts.
+
+Audio
+
+Original audio can be preserved, but audio editing is not currently
+supported.
+
+17. Engineering Decisions
+
+Why Celery instead of FastAPI BackgroundTasks?
+
+Video processing and AI inference are long-running workloads.
+
+FastAPI Request
+      │
+      ▼
+Create Job
+      │
+      ▼
+Celery + Redis
+      │
+      ▼
+Worker executes heavy processing
+
+This keeps the API responsive and provides a cleaner path toward
+retries, time limits, and multiple workers.
+
+Why GroundingDINO instead of a traditional fixed-class detector?
+
+The application accepts arbitrary natural-language object descriptions.
+
+User:
+"Replace the red helmet."
+
+        │
+        ▼
+
+Text-conditioned detection
+
+        │
+        ▼
+
+Target bounding box
+
+A text-conditioned detector better matches this interaction model than
+an application restricted to a fixed object-class list.
+
+Why Claude instead of regex?
+
+Natural-language instructions can contain:
+
+compound operations
+
+ambiguous wording
+
+different descriptions of the same object
+
+multilingual input
+
+additional constraints
+
+Example:
+
+"Remove the drink and replace the hat with a red cap."
+
+A structured intent parser can separate these operations before the
+computer-vision pipeline executes them.
+
+Why SAM2?
+
+Detection answers:
+
+Where is the object?
+
+Segmentation answers:
+
+Which pixels belong to the object?
+
+Tracking answers:
+
+Where is that object in subsequent frames?
+
+Combining these steps provides the mask sequence required for temporal
+video editing.
+
+18. Design Principles
+
+1. Keep video processing out of the frontend.
+2. Keep long-running work asynchronous.
+3. Convert natural language into structured intent early.
+4. Separate detection, segmentation, editing, and composition.
+5. Expose processing state to the user.
+6. Provide fallback behavior where practical.
+7. Keep APIs versioned and predictable.
+8. Validate inputs before expensive processing.
+9. Never commit secrets.
+10. Prefer explainable engineering decisions over unnecessary complexity.
+
+19. Demo Scenario
+
+The recommended demo uses:
+
+Input Video:
+Person holding Coca-Cola bottle
+
+Reference Image:
+Pepsi bottle
+
+Prompt:
+"Replace the Coca-Cola bottle with the Pepsi bottle."
+
+Demo flow
+
+flowchart LR
+    A["Upload Video"]
+    B["Upload Pepsi Reference"]
+    C["Enter Prompt"]
+    D["Start Processing"]
+    E["Show Status"]
+    F["Play Final Video"]
+
+    A --> B --> C --> D --> E --> F
+
+20. 2--3 Minute Demo Video
+
+The demo video should visibly show:
+
+Uploading the input video
+
+Adding the optional reference image
+
+Entering the editing prompt
+
+Starting processing
+
+Showing processing stages
+
+Playing the final result
+
+Suggested narration
+
+"Hello, this is LightNoteAI, an AI-powered video editing application.
+First, I'm uploading the input video. Next, I'm adding a Pepsi
+reference image. I'll now provide the instruction: replace the
+Coca-Cola bottle with the Pepsi bottle. I'll start the processing. The
+backend handles the request asynchronously through the AI
+video-processing pipeline. The system parses the instruction, detects
+the target, segments and tracks it, applies the replacement, and
+finally composes the output video. The processing is complete, and
+here is the final edited result."
+
+Keep long processing/waiting periods trimmed from the recording.
+
+21. Interview Quick Reference
+
+Pipeline in one sentence
+
+Claude parses the instruction → GroundingDINO detects the target →
+SAM2 segments and tracks it → the editing stage modifies the masked
+region → FFmpeg composes the final video.
+
+Backend in one sentence
+
+FastAPI handles APIs, Celery executes long-running jobs, Redis
+coordinates the queue/progress flow, and WebSocket or polling exposes
+job status to the frontend.
+
+Main engineering challenge
+
+The difficult part is not simply generating an image; it is
+maintaining a consistent target mask across video frames and turning
+that temporal data into a valid final video.
+
+Prototype trade-off
+
+The project prioritizes a modular, explainable end-to-end pipeline
+over claiming production-level visual quality.
+
+22. Future Improvements
+
+Possible next steps:
+
+Reference-image conditioning
+        │
+        ▼
+Better identity / appearance preservation
+
+Temporal video inpainting
+        │
+        ▼
+More consistent frame-to-frame results
+
+Additional engineering improvements:
+
+GPU-aware worker scheduling
+
+object-storage integration
+
+stronger authentication/authorization
+
+rate limiting
+
+persistent job metadata
+
+richer retry policies
+
+model health checks
+
+automated integration tests
+
+improved temporal consistency
+
+production deployment with separate worker infrastructure
+
+23. Repository Submission Checklist
+
+Before submission:
+
+[ ] Frontend source code
+[ ] Backend source code
+[ ] AI pipeline code
+[ ] Worker / queue configuration
+[ ] Docker configuration, if used
+[ ] .env.example
+[ ] README.md
+[ ] No API keys or secrets committed
+[ ] Local setup tested from a clean environment
+[ ] Video upload tested
+[ ] Reference image tested
+[ ] Natural-language prompt tested
+[ ] Processing status tested
+[ ] Final output tested
+[ ] 2–3 minute demo video recorded
+
+24. Final Architecture Summary
+
+                         LIGHTNOTEAI
+                              │
+                              ▼
+                    ┌───────────────────┐
+                    │ Natural Language  │
+                    │ Editing Request   │
+                    └─────────┬─────────┘
+                              │
+                              ▼
+                    ┌───────────────────┐
+                    │   Claude API      │
+                    │ Intent Parsing    │
+                    └─────────┬─────────┘
+                              │
+                              ▼
+                    ┌───────────────────┐
+                    │  GroundingDINO    │
+                    │ Object Detection  │
+                    └─────────┬─────────┘
+                              │
+                              ▼
+                    ┌───────────────────┐
+                    │       SAM2        │
+                    │ Segment + Track   │
+                    └─────────┬─────────┘
+                              │
+                              ▼
+                    ┌───────────────────┐
+                    │ Object Editing    │
+                    │ Inpaint / Replace │
+                    └─────────┬─────────┘
+                              │
+                              ▼
+                    ┌───────────────────┐
+                    │ FFmpeg + OpenCV   │
+                    │ Video Composition │
+                    └─────────┬─────────┘
+                              │
+                              ▼
+                    ┌───────────────────┐
+                    │ Final Edited MP4  │
+                    └───────────────────┘
+
+       FastAPI + Celery + Redis handle the workflow
+       Next.js provides the user-facing application
+
+License
+
+Add the license appropriate for your submission/repository.
+
+Acknowledgement
+
+Built as a technical assignment project for LightNote AI ---
+Full-Stack AI Developer Intern.
 
 **
 The Gemini response is constrained to structured JSON with operation, target, replacement, and confidence. If the API is unavailable, the deterministic fallback still supports common remove and replace commands.
