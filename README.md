@@ -20,10 +20,7 @@
 </table>
 
 ---
-![Uploading image.png…]()
 
-
-<h2>📁 Project Structure</h2>
 
 <p align="center">
   <img src="docs/screenshots/project-structure.png" alt="LightNoteAI Project Structure" width="850">
