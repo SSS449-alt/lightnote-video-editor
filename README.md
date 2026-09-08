@@ -5,7 +5,7 @@
 [![Python](https://img.shields.io/badge/Python-3.11-blue)](https://python.org)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115-green)](https://fastapi.tiangolo.com)
 [![Next.js](https://img.shields.io/badge/Next.js-14-black)](https://nextjs.org)
-[![Claude API](https://img.shields.io/badge/Claude-3.5_Sonnet-orange)](https://anthropic.com)
+[![Gemini API](https://img.shields.io/badge/Gemini-API-blue)](https://ai.google.dev/)
 
 ---
 
@@ -15,7 +15,7 @@ User Prompt (Natural Language)
 ↓
 ┌─────────────────────────────────────────────────┐
 │ STAGE 1: INTENT PARSING │
-│ Claude API (claude-sonnet-4-6) │
+│ Gemini API + deterministic fallback │
 │ "Replace Coca-Cola with Pepsi" → │
 │ { operation: replace_object, │
 │ target: "Coca-Cola bottle", │
@@ -58,7 +58,7 @@ Final edited video (web-optimized MP4)
 | Backend API | FastAPI | Async, auto-docs, typed |
 | Job Queue | Celery + Redis | Non-blocking GPU tasks |
 | Real-time | WebSocket | Live pipeline progress |
-| NLP Parser | Claude API | Best-in-class instruction understanding |
+| NLP Parser | Gemini API + local fallback | Structured intent extraction with offline resilience |
 | Object Detection | GroundingDINO | Zero-shot, no training needed |
 | Segmentation | SAM2 (Meta) | State-of-art video tracking |
 | Inpainting | Stable Diffusion | High-quality replacement |
@@ -68,8 +68,8 @@ Final edited video (web-optimized MP4)
 
 ## AI Models & Why I Chose Them
 
-### Claude API (Intent Parsing)
-Natural language is ambiguous. "Remove the coke" could mean the drink, the drug, or the fuel. Claude's reasoning capability handles edge cases, compound instructions ("replace X and also remove Y"), multilingual prompts, and low-confidence detection. It returns structured JSON that drives every downstream stage.
+### Gemini API (Intent Parsing)
+Natural language is ambiguous. The parser sends the instruction to Gemini with a strict JSON schema and falls back to a deterministic local parser when the remote API is unavailable. The structured intent drives every downstream stage.
 
 ### GroundingDINO (Object Detection)
 Traditional object detectors (YOLO, R-CNN) require pre-defined class lists. GroundingDINO accepts arbitrary text prompts and performs zero-shot detection — critical since users can ask for any object. It bridges NLP and computer vision directly.
@@ -101,7 +101,7 @@ cd lightnote-video-editor
 
 # Copy and fill in your API key
 cp backend/.env.example backend/.env
-# Set ANTHROPIC_API_KEY in backend/.env
+# Set the Gemini-compatible API key in backend/.env
 
 docker-compose up --build
 ```
@@ -119,7 +119,7 @@ source venv/bin/activate  # Windows: venv\Scripts\activate
 pip install -r requirements.txt
 
 cp .env.example .env
-# Set ANTHROPIC_API_KEY in .env
+# Set the Gemini-compatible API key in .env
 
 # Terminal 1: Start API
 uvicorn main:app --reload --port 8000
@@ -185,5 +185,5 @@ YOLO requires the object class to be in its training set. GroundingDINO accepts 
 **"How does real-time progress work?"**
 The Celery worker publishes to a Redis pub/sub channel. The FastAPI WebSocket handler subscribes and forwards updates to the browser client. If WebSocket fails, the frontend falls back to HTTP polling.
 
-**"How does Claude help beyond a simple regex?"**
-Consider: "Remove the drink and replace the hat with a red cap." A regex can't handle compound instructions, ambiguity, or multilingual input. Claude returns structured JSON with confidence scores, allowing the pipeline to handle edge cases gracefully.
+**"How does Gemini help beyond a simple regex?"**
+The Gemini response is constrained to structured JSON with operation, target, replacement, and confidence. If the API is unavailable, the deterministic fallback still supports common remove and replace commands.
